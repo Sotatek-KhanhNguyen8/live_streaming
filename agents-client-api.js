@@ -423,18 +423,52 @@ startButton.onclick = async () => {
 };
 
 const destroyButton = document.getElementById('destroy-button');
-destroyButton.onclick = async () => {
-  await fetch(`${DID_API.url}/${DID_API.service}/streams/${streamId}`, {
-    method: 'DELETE',
-    headers: {
-      Authorization: `Basic ${DID_API.key}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ session_id: sessionId }),
-  });
+let autoActionInterval = null; // lưu interval để clear sau
 
-  stopAllStreams();
-  closePC();
+// Hành động A bạn muốn thực hiện mỗi 50s
+const performActionA = async () => {
+  if (peerConnection?.signalingState === 'stable' || peerConnection?.iceConnectionState === 'connected') {
+    // Pasting the user's message to the Chat History element
+
+
+    // Agents Overview - Step 3: Send a Message to a Chat session - Send a message to a Chat
+    const playResponse = await fetchWithRetries(`${DID_API.url}/agents/${agentId}/chat/${chatId}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${DID_API.key}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        streamId: streamId,
+        sessionId: sessionId,
+        messages: [
+          {
+            role: 'user',
+            content: "Hãy giới thiệu về các sản phẩm trong knowledge",
+            created_at: new Date().toString(),
+          },
+        ],
+      }),
+    });
+    const playResponseData = await playResponse.json();
+    if (playResponse.status === 200 && playResponseData.chatMode === 'TextOnly') {
+      console.log('User is out of credit, API only return text messages');
+    }
+  }
+};
+
+destroyButton.onclick = () => {
+  const currentText = destroyButton.innerText;
+
+  if (currentText === "Auto-Off") {
+    destroyButton.innerText = "Auto-On";
+    performActionA(); // chạy ngay lần đầu
+    autoActionInterval = setInterval(performActionA, 50000); // chạy mỗi 50s
+  } else {
+    destroyButton.innerText = "Auto-Off";
+    clearInterval(autoActionInterval); // dừng lặp
+    autoActionInterval = null;
+  }
 };
 
 // Agents API Workflow
