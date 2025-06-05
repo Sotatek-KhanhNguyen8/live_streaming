@@ -2,6 +2,64 @@
 const fetchJsonFile = await fetch('./api.json');
 const DID_API = await fetchJsonFile.json();
 
+
+function extractJsonFromString(inputString) {
+  try {
+    const match = inputString.match(/\{[\s\S]*\}/); // tương đương re.DOTALL
+    if (match) {
+      return JSON.parse(match[0]);
+    } else {
+      console.log("Không tìm thấy JSON.");
+      return null;
+    }
+  } catch (error) {
+    console.error("Lỗi khi parse JSON:", error.message);
+    return null;
+  }
+}
+async function callGpt4oMini(inputText) {
+  const apiKey = ''; // 👈 Thay bằng API Key của bạn
+  const endpoint = 'https://api.openai.com/v1/chat/completions';
+
+  const messages = [
+    {
+      role: "system",
+      content: "Bạn là AI trích xuất các sản phẩm từ đoạn text, từ đó mô tả chi tiết thêm các sản phẩm và trả ra output là một json với số key-value tương ứng với số sản phẩm",
+    },
+    {
+      role: "user",
+      content: `Hãy chia nội dung bên dưới thành một Json theo định dạng: {"sp1": "<mô tả chi tiết sản phẩm 1>", "sp2": "<mô tả chi tiết sản phẩm 2>",...}. Lưu ý: cần mô tả chi tiết hơn các sản phẩm trong khoảng ít nhất 40 từ. Dưới đây là đoạn văn cần trích xuất:\n\n${inputText}\nJson output:`,
+    }
+  ];
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: messages,
+        temperature: 0.7
+      })
+    });
+
+    const result = await response.json();
+    // console.log(result)
+    const reply = result.choices?.[0]?.message?.content || '';
+    // console.log(reply)
+    const parsedJson = extractJsonFromString(reply);
+    console.log(parsedJson)
+    return parsedJson;
+
+  } catch (error) {
+    console.error("Lỗi khi gọi GPT-4o mini:", error);
+    return {};
+  }
+}
+
 if (DID_API.key == '🤫') alert('Please put your api key inside ./api.json and restart..');
 
 const RTCPeerConnection = (
@@ -17,7 +75,7 @@ let sessionClientAnswer;
 let statsIntervalId;
 let videoIsPlaying;
 let lastBytesReceived;
-let agentId = "agt_QBKHQVCm";
+let agentId = "agt_M1rjPI4R";
 let chatId;
 
 const videoElement = document.getElementById('video-element');
@@ -30,6 +88,7 @@ const streamingStatusLabel = document.getElementById('streaming-status-label');
 const agentIdLabel = document.getElementById('agentId-label');
 const chatIdLabel = document.getElementById('chatId-label');
 const textArea = document.getElementById('textArea');
+let checkstatus = "end"
 
 // Play the idle video when the page is loaded
 window.onload = (event) => {
@@ -89,8 +148,17 @@ async function createPeerConnection(offer, iceServers) {
     }
     if (msg.includes('stream/started')) {
       console.log(msg);
-      document.getElementById('msgHistory').innerHTML += `<span>${decodedMsg}</span><br><br>`;
-    } else {
+      checkstatus = "start"
+      // document.getElementById('msgHistory').innerHTML += `<span>${decodedMsg}</span><br><br>`;
+      }
+    else if (msg.includes('stream/done')) {
+      console.log('Stream done:', msg);
+      checkstatus = "end" }
+    else if (msg.includes('stream/ready')) {
+      console.log('Stream ready:', msg);
+      checkstatus = "start" }
+    else {
+      // checkstatus = "start"
       console.log(msg);
     }
   };
@@ -346,7 +414,7 @@ connectButton.onclick = async () => {
     }),
   });
 
-  // $$$$$
+  // // $$$$$
   if (peerConnection?.signalingState === 'stable' || peerConnection?.iceConnectionState === 'connected') {
     // Pasting the user's message to the Chat History element
 
@@ -364,7 +432,7 @@ connectButton.onclick = async () => {
         messages: [
           {
             role: 'user',
-            content: "giới thiệu về các sản phẩm",
+            content: "Hãy giới thiệu với khách hàng nguyên văn câu sau: 'Xin chào cả nhà! Chào mừng mọi người đến với buổi livestream hôm nay, cùng mình khám phá những sản phẩm siêu hot và nhận thật nhiều ưu đãi nhé!' ",
             created_at: new Date().toString(),
           },
         ],
@@ -382,7 +450,15 @@ const startButton = document.getElementById('start-button');
 startButton.onclick = async () => {
   // connectionState not supported in firefox
   if (peerConnection?.signalingState === 'stable' || peerConnection?.iceConnectionState === 'connected') {
+    if (checkstatus === "start") {
+      console.log("Streaming is already started. Aborting...");
+      return; // Dừng hàm tại đây
+    }
     // Pasting the user's message to the Chat History element
+    // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    // stopAllStreams();
+    // closePC();
+    // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     document.getElementById(
       'msgHistory'
     ).innerHTML += `<span style='opacity:0.5'><u>User:</u> ${textArea.value}</span><br>`;
@@ -425,13 +501,55 @@ startButton.onclick = async () => {
 const destroyButton = document.getElementById('destroy-button');
 let autoActionInterval = null; // lưu interval để clear sau
 
+let descriptionList;
+
+// ✅ Chỉ số hiện tại (toàn cục)
+let currentIndex = 0;
+
 // Hành động A bạn muốn thực hiện mỗi 50s
 const performActionA = async () => {
   if (peerConnection?.signalingState === 'stable' || peerConnection?.iceConnectionState === 'connected') {
+    const currentText = descriptionList[currentIndex];
+    console.log(`🔹 Đang xử lý sản phẩm thứ ${currentIndex + 1}: ${currentText}`);
+        // 1. Lấy knowledgeId từ agent
+    const getAgentUrl = `https://api.d-id.com/agents/${agentId}`;
+    const headers = {
+      accept: 'application/json',
+      authorization: `Basic ${DID_API.key}`,
+      'content-type': 'application/json'
+    };
+
+    const agentResponse = await fetch(getAgentUrl, { method: 'GET', headers });
+    const agentData = await agentResponse.json();
+    const knowledgeId = agentData.knowledge?.id;
+    console.log("knowledgeId: ", knowledgeId)
+    if (!knowledgeId) {
+      console.error("Không tìm thấy knowledgeId trong phản hồi.");
+      return;
+    }
+
+    // 2. Gửi PATCH để cập nhật base_knowledge
+    const updateUrl = `https://api.d-id.com/knowledge/${knowledgeId}`;
+    const patchOptions = {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ base_knowledge: currentText})
+    };
+
+    const updateResponse = await fetch(updateUrl, patchOptions);
+    const updateResult = await updateResponse.json();
+    console.log("Đã cập nhật knowledge:", updateResult);
+    // alert("Đã cập nhật kiến thức thành công!");
     // Pasting the user's message to the Chat History element
-
-
+    // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    // stopAllStreams();
+    // closePC();
+    // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     // Agents Overview - Step 3: Send a Message to a Chat session - Send a message to a Chat
+    while (checkstatus === "start") {
+      console.log("Waiting for checkstatus to become 'end'...");
+      await new Promise(resolve => setTimeout(resolve, 1000)); // kiểm tra mỗi 1 giây
+    }
     const playResponse = await fetchWithRetries(`${DID_API.url}/agents/${agentId}/chat/${chatId}`, {
       method: 'POST',
       headers: {
@@ -454,19 +572,36 @@ const performActionA = async () => {
     if (playResponse.status === 200 && playResponseData.chatMode === 'TextOnly') {
       console.log('User is out of credit, API only return text messages');
     }
+    currentIndex = (currentIndex + 1) % descriptionList.length;
   }
 };
 
-destroyButton.onclick = () => {
+let autoActionTimeout;
+destroyButton.onclick = async () => {
   const currentText = destroyButton.innerText;
-
+  descriptionList = Object.values(parsedJson);
+  console.log(parsedJson)
+  console.log(descriptionList)
+  
   if (currentText === "Auto-Off") {
+  
     destroyButton.innerText = "Auto-On";
-    performActionA(); // chạy ngay lần đầu
-    autoActionInterval = setInterval(performActionA, 50000); // chạy mỗi 50s
+    // performActionA(); // chạy ngay lần đầu
+    // autoActionInterval = setInterval(performActionA, 50000); // chạy mỗi 50s
+    
+    async function runActionLoop() {
+    while (checkstatus === "start") {
+      console.log("Waiting for checkstatus to become 'end'...");
+      await new Promise(resolve => setTimeout(resolve, 1000)); // kiểm tra mỗi 1 giây
+    }
+      await performActionA(); // chạy xong hoàn toàn hàm này
+      autoActionTimeout = setTimeout(runActionLoop, 50000); // đợi 50s rồi mới gọi tiếp
+    }
+    runActionLoop();
   } else {
     destroyButton.innerText = "Auto-Off";
-    clearInterval(autoActionInterval); // dừng lặp
+    clearTimeout(autoActionTimeout);
+    // clearInterval(autoActionInterval); // dừng lặp
     autoActionInterval = null;
   }
 };
@@ -596,6 +731,7 @@ const inputText = document.getElementById('input-text');
 inputText.style.width = '400px';
 inputText.style.height = '250px';
 inputText.style.transform = 'translateX(-10px)';
+let parsedJson;
 agentsButton.onclick = async () => {
   try {
     const userInput = inputText.value;
@@ -603,36 +739,41 @@ agentsButton.onclick = async () => {
       alert("Vui lòng nhập nội dung kiến thức.");
       return;
     }
+    let savedInputText = inputText.value;
+    console.log("Đã lưu nội dung:", savedInputText);
+    parsedJson = await callGpt4oMini(savedInputText)
+    console.log(parsedJson)
+    alert("Cập nhật thành công");
 
-    // 1. Lấy knowledgeId từ agent
-    const getAgentUrl = `https://api.d-id.com/agents/${agentId}`;
-    const headers = {
-      accept: 'application/json',
-      authorization: `Basic ${DID_API.key}`,
-      'content-type': 'application/json'
-    };
+  //   // 1. Lấy knowledgeId từ agent
+  //   const getAgentUrl = `https://api.d-id.com/agents/${agentId}`;
+  //   const headers = {
+  //     accept: 'application/json',
+  //     authorization: `Basic ${DID_API.key}`,
+  //     'content-type': 'application/json'
+  //   };
 
-    const agentResponse = await fetch(getAgentUrl, { method: 'GET', headers });
-    const agentData = await agentResponse.json();
-    const knowledgeId = agentData.knowledge?.id;
+  //   const agentResponse = await fetch(getAgentUrl, { method: 'GET', headers });
+  //   const agentData = await agentResponse.json();
+  //   const knowledgeId = agentData.knowledge?.id;
+  //   console.log("knowledgeId: ", knowledgeId)
+  //   if (!knowledgeId) {
+  //     console.error("Không tìm thấy knowledgeId trong phản hồi.");
+  //     return;
+  //   }
 
-    if (!knowledgeId) {
-      console.error("Không tìm thấy knowledgeId trong phản hồi.");
-      return;
-    }
+  //   // 2. Gửi PATCH để cập nhật base_knowledge
+  //   const updateUrl = `https://api.d-id.com/knowledge/${knowledgeId}`;
+  //   const patchOptions = {
+  //     method: 'PATCH',
+  //     headers,
+  //     body: JSON.stringify({ base_knowledge: userInput })
+  //   };
 
-    // 2. Gửi PATCH để cập nhật base_knowledge
-    const updateUrl = `https://api.d-id.com/knowledge/${knowledgeId}`;
-    const patchOptions = {
-      method: 'PATCH',
-      headers,
-      body: JSON.stringify({ base_knowledge: userInput })
-    };
-
-    const updateResponse = await fetch(updateUrl, patchOptions);
-    const updateResult = await updateResponse.json();
-    console.log("Đã cập nhật knowledge:", updateResult);
-    alert("Đã cập nhật kiến thức thành công!");
+  //   const updateResponse = await fetch(updateUrl, patchOptions);
+  //   const updateResult = await updateResponse.json();
+  //   console.log("Đã cập nhật knowledge:", updateResult);
+  //   alert("Đã cập nhật kiến thức thành công!");
 
   } catch (err) {
     console.error("Lỗi khi cập nhật kiến thức:", err);
@@ -641,5 +782,5 @@ agentsButton.onclick = async () => {
 };
 
 // Paste Your Created Agent and Chat IDs Here:
-agentId = 'agt_QBKHQVCm';
+// agentId = 'agt_QBKHQVCm';
 // chatId = 'cht__fvKMwhUrEDq-sv6YdW6o';
